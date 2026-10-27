@@ -1,0 +1,363 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Good Morning! How a felt cartoon was made in code</title>
+<meta name="description" content="A 20-second felt-and-paper kids cartoon in which every frame was drawn by our own path tracer. The full process, step by step: prompts, story, targets, modelling in code, animatic, render, review and the IP pass.">
+<meta property="og:title" content="Good Morning! How a felt cartoon was made in code">
+<meta property="og:description" content="Every frame drawn by our own WebGPU path tracer. Generated images were only the target.">
+<meta property="og:image" content="media/img/poster.jpg">
+<meta name="theme-color" content="#151d46">
+<link rel="preload" href="media/fonts/Fredoka.ttf" as="font" type="font/ttf" crossorigin>
+<style>
+@font-face{font-family:"Fredoka";src:url("media/fonts/Fredoka.ttf") format("truetype");font-weight:300 700;font-display:swap}
+:root{
+  --night:#151d46; --night-2:#222c63; --moon:#f4e7b8;
+  --dawn:#f2b45f; --dawn-ink:#3a1e10;
+  --day:#e9eff6; --day-ink:#17204a;
+  --yarn:#c8312a; --chick:#f3c533; --felt:#4f8a3c;
+  --bg:var(--night); --ink:#eef0fa; --muted:rgba(238,240,250,.68); --line:rgba(238,240,250,.18); --card:rgba(255,255,255,.06);
+  --display:"Fredoka",ui-rounded,"Arial Rounded MT Bold",system-ui,sans-serif;
+  --text:Charter,"Iowan Old Style","Palatino Linotype",Georgia,serif;
+  --ui:ui-rounded,system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+body[data-tone="dawn"]{--bg:var(--dawn);--ink:var(--dawn-ink);--muted:rgba(58,30,16,.72);--line:rgba(58,30,16,.22);--card:rgba(255,255,255,.28)}
+body[data-tone="day"]{--bg:var(--day);--ink:var(--day-ink);--muted:rgba(23,32,74,.7);--line:rgba(23,32,74,.16);--card:rgba(255,255,255,.7)}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.62 var(--text);transition:background-color .9s ease,color .9s ease}
+@media (prefers-reduced-motion:reduce){body{transition:none}}
+a{color:inherit;text-decoration-color:var(--yarn);text-underline-offset:3px;text-decoration-thickness:2px}
+:focus-visible{outline:3px solid var(--chick);outline-offset:3px;border-radius:4px}
+img,video{display:block;max-width:100%}
+
+/* layout */
+.page{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,46vw);gap:0 56px;max-width:1500px;margin:0 auto;padding:0 40px}
+.steps{grid-column:1;grid-row:1;padding:0 0 18vh;min-width:0}
+.stage{grid-column:2;grid-row:1;align-self:start;position:sticky;top:0;height:100vh;display:flex;flex-direction:column;justify-content:center;padding:32px 0}
+.screen{position:relative;background:#000;border-radius:14px;overflow:hidden;aspect-ratio:4/3;box-shadow:0 0 0 1px var(--line),0 30px 60px -30px rgba(0,0,0,.55)}
+.screen video{width:100%;height:100%;object-fit:cover}
+.stage-bar{display:flex;align-items:center;gap:14px;margin-top:14px;font:500 15px/1.3 var(--ui);color:var(--muted)}
+.stage-bar .now{flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stage-bar .now b{color:var(--ink);font-weight:600}
+.btn{font:600 14px/1 var(--ui);color:var(--ink);background:transparent;border:1.5px solid var(--line);border-radius:999px;padding:9px 14px;cursor:pointer;white-space:nowrap}
+.btn:hover{border-color:var(--ink)}
+
+/* hero */
+.hero{min-height:100vh;display:flex;flex-direction:column;justify-content:center;padding:12vh 0 8vh}
+.hero h1{font:700 clamp(54px,8.6vw,124px)/.9 var(--display);letter-spacing:-.01em;margin:0 0 28px;color:var(--chick)}
+.hero h1 span{display:block}
+.hero h1 .bang{color:var(--yarn);display:inline}
+.lede{font-size:clamp(20px,1.7vw,24px);line-height:1.5;max-width:30em;margin:0 0 30px}
+.facts{display:grid;grid-template-columns:repeat(3,auto);justify-content:start;gap:6px 36px;margin:0;font:500 15px/1.4 var(--ui)}
+.facts dt{color:var(--muted)}
+.facts dd{margin:0;color:var(--ink)}
+.scrollhint{margin-top:9vh;font:500 15px/1.4 var(--ui);color:var(--muted)}
+
+/* steps with a yarn line */
+.step{position:relative;padding:12vh 0 0 64px;max-width:44em}
+.step::before{content:"";position:absolute;left:19px;top:0;bottom:-12vh;width:2px;background:var(--yarn);opacity:.85}
+.step:last-of-type::before{bottom:auto;height:calc(12vh + 20px)}
+.spool{position:absolute;left:0;top:calc(12vh - 4px);width:40px;height:40px;border-radius:50%;background:var(--chick);color:#3a2a05;display:grid;place-items:center;font:700 17px/1 var(--display);box-shadow:inset 0 0 0 3px rgba(0,0,0,.12)}
+.step h2{font:600 clamp(30px,3vw,42px)/1.08 var(--display);margin:0 0 18px;letter-spacing:-.005em}
+.step h3{font:600 21px/1.25 var(--display);margin:40px 0 10px}
+.step p{margin:0 0 16px;max-width:36em}
+.muted{color:var(--muted)}
+.small{font-size:15px;line-height:1.5}
+
+/* prompts */
+.prompt{margin:22px 0;padding:18px 20px 16px;border-left:3px solid var(--yarn);background:var(--card);border-radius:0 10px 10px 0}
+.prompt p{margin:0 0 8px;font-size:17px}
+.prompt p:last-child{margin-bottom:0}
+.who{display:block;font:600 14px/1.3 var(--ui);color:var(--muted);margin-bottom:6px}
+.prompt.gen{border-left-color:var(--chick)}
+.prompt.gen p{font:15px/1.55 var(--ui)}
+
+/* beats table */
+.beats{width:100%;border-collapse:collapse;font:15px/1.45 var(--ui);margin:18px 0}
+.beats th{text-align:left;font-weight:600;color:var(--muted);padding:8px 10px 8px 0;border-bottom:1.5px solid var(--line)}
+.beats td{vertical-align:top;padding:10px 10px 10px 0;border-bottom:1px solid var(--line)}
+.beats td:first-child{white-space:nowrap;font-variant-numeric:tabular-nums}
+.beats button{all:unset;cursor:pointer;font-weight:600;color:var(--ink);text-decoration:underline;text-decoration-color:var(--yarn);text-underline-offset:3px}
+
+/* figures */
+figure{margin:24px 0}
+figcaption{font:14px/1.45 var(--ui);color:var(--muted);margin-top:8px}
+.tag{display:inline-block;font:600 12.5px/1 var(--ui);padding:5px 9px;border-radius:999px;margin-right:6px;vertical-align:1px}
+.tag.target{background:var(--chick);color:#3a2a05}
+.tag.ours{background:var(--yarn);color:#fff}
+.shot{border-radius:10px;overflow:hidden;background:#000}
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.grid4{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
+.grid2 img,.grid4 img{border-radius:8px;width:100%;height:auto}
+.pair{margin:30px 0}
+.pair .grid2{position:relative}
+.pair-head{display:flex;align-items:baseline;justify-content:space-between;gap:12px;margin-bottom:8px;font:500 15px/1.35 var(--ui)}
+.pair-head b{font-weight:600}
+.list{padding-left:1.1em;margin:0 0 16px}
+.list li{margin:0 0 8px}
+.callout{font:600 clamp(22px,2vw,28px)/1.3 var(--display);margin:30px 0}
+footer{padding:12vh 0 10vh 64px;max-width:44em;font:15px/1.6 var(--ui);color:var(--muted)}
+footer p{margin:0 0 10px}
+
+/* tablet & phone: the film pins to the top */
+@media (max-width:980px){
+  .page{grid-template-columns:1fr;padding:0 16px;gap:0}
+  .steps{grid-row:2}
+  .stage{grid-column:1;grid-row:1;position:sticky;top:0;z-index:5;height:auto;padding:8px 0 8px;background:var(--bg);transition:background-color .9s ease}
+  .screen{width:min(100%,calc(36vh*4/3));margin:0 auto;border-radius:10px}
+  .stage-bar{width:min(100%,calc(36vh*4/3));margin:8px auto 0;font-size:13.5px;gap:10px}
+  .btn{padding:7px 11px;font-size:13px}
+  .hero{min-height:auto;padding:7vh 0 2vh}
+  .facts{grid-template-columns:repeat(3,auto);gap:4px 22px;font-size:14px}
+  .step{padding:9vh 0 0 46px}
+  .step::before{left:13px;bottom:-9vh}
+  .spool{width:28px;height:28px;font-size:13px;top:calc(9vh - 2px)}
+  .grid4{grid-template-columns:repeat(2,1fr)}
+  .beats td:nth-child(3){display:none}
+  .beats th:nth-child(3){display:none}
+  footer{padding-left:0}
+  body{font-size:17px}
+}
+@media (max-width:420px){.grid2{grid-template-columns:1fr}}
+</style>
+</head>
+<body data-tone="night">
+<div class="page">
+
+<aside class="stage" aria-label="The finished film">
+  <div class="screen">
+    <video id="film" src="media/good-morning.mp4" poster="media/img/poster.jpg" muted autoplay loop playsinline preload="metadata" controls aria-label="Good Morning! The finished 20-second cartoon"></video>
+  </div>
+  <div class="stage-bar">
+    <span class="now" id="now"><b>Good Morning!</b> v1.1, 20 s</span>
+    <button class="btn" id="sound" type="button" aria-pressed="false">Turn sound on</button>
+  </div>
+</aside>
+
+<main class="steps">
+
+<header class="hero" data-tone="night" data-label="The film">
+  <h1><span>Good</span><span>Morning<span class="bang">!</span></span></h1>
+  <p class="lede">A 20-second cartoon in a world of felt and paper. Every frame was drawn by our own code: our own path tracer, models and animation written as programs. Generated pictures were used only as a target to aim at. This page walks through how it was made, using the real prompts and notes from the production chats.</p>
+  <dl class="facts">
+    <div><dt>Length</dt><dd>20 s, 480 frames</dd></div>
+    <div><dt>Frame</dt><dd>1440 × 1080, 24 fps</dd></div>
+    <div><dt>Brief to v1</dt><dd>4 h 37 min</dd></div>
+  </dl>
+  <p class="scrollhint">Scroll down. The film stays on screen while you read.</p>
+</header>
+
+<section class="step" id="ask" data-tone="night" data-label="The ask">
+  <span class="spool" aria-hidden="true">1</span>
+  <h2>The ask</h2>
+  <p>Before this, the same engine had made two dark, cinematic films. Nurbek, a director in Higgsfield marketing, wanted to see something else.</p>
+  <div class="prompt"><span class="who">Nurbek</span>
+    <p>Can we do something bright now? Cartoons, for kids. You went too far into cinema. Let's try other directions. What can you offer? You understand what you're capable of now.</p></div>
+  <p>Three styles were proposed: clay, felt and paper, and bright 3D. The answer was short.</p>
+  <div class="prompt"><span class="who">Nurbek</span><p>Let's do all three.</p></div>
+  <p>Each style got its own chat. The lead chat wrote this brief for the felt one (shortened, original wording):</p>
+  <div class="prompt"><span class="who">Lead brief to the felt chat</span>
+    <p>Make a 20-second bright children's cartoon in a world of felt and paper […]: fuzz on felt, cardboard sets with visible layers and edges, threads, buttons, stitches, painted paper — entirely in our own code.</p>
+    <p>A story with a hook in the first second and a funny or touching twist; ideally the twist plays on the handmade material (a thread unravels, a paper sun is lifted by a hand-stick).</p>
+    <p>Generate targets: turnarounds of the heroes and 6–8 styleframes. They are a target for comparison; they never go into the frame. Then models in code, side by side with the refs; an animatic under music; the final render; sound.</p>
+    <p>Rendering only on remote GPUs. Show the styleframes and the animatic before the final render.</p></div>
+</section>
+
+<section class="step" id="story" data-tone="night" data-label="Story and beats">
+  <span class="spool" aria-hidden="true">2</span>
+  <h2>A story that runs on the material</h2>
+  <p>A tiny felt chick crows at dawn, but the paper sun will not rise. It climbs the cardboard hill and finds the sun asleep on the far end of the moon's yarn, hung over a wooden spool. Hanging on the yarn with all its weight, it hauls the sun up. The twist: the moment it lets go to celebrate, the sun drops and night falls again. So it ties the yarn to a fat sleeping sheep, who now holds the day up while snoring.</p>
+  <p>The whole film was timed to a bar map of the music before anything was modelled: the sunrise sits on the drop at 11.1 s, and the music stops for the gag between 13.4 and 15.7 s. Tap a time to jump the film there.</p>
+  <table class="beats">
+    <thead><tr><th>Time</th><th>Shot</th><th>What happens</th></tr></thead>
+    <tbody>
+      <tr><td><button data-t="0">0.0</button></td><td>Hook</td><td>Night, close on the felt nest. The chick springs up on a wire spring and crows.</td></tr>
+      <tr><td><button data-t="2.06">2.1</button></td><td>Wide</td><td>The whole diorama: cardboard hills, felt trees, the paper moon on red yarn from a spool, the sheep asleep. Nothing happens.</td></tr>
+      <tr><td><button data-t="4.31">4.3</button></td><td>Crow</td><td>It crows with all its might. The moon only wobbles on its yarn.</td></tr>
+      <tr><td><button data-t="6.57">6.6</button></td><td>Climb</td><td>Three hops up the cardboard layers. Behind the hill, the paper sun is asleep on the other end of the yarn.</td></tr>
+      <tr><td><button data-t="8.86">8.9</button></td><td>Pull</td><td>It grabs the yarn, then hangs on it with its whole weight. Slowly the yarn gives.</td></tr>
+      <tr><td><button data-t="11.12">11.1</button></td><td>Drop</td><td>The sun rises and wakes. Pop-up flowers spring open, the sky turns to day.</td></tr>
+      <tr><td><button data-t="13.41">13.4</button></td><td>Gag</td><td>It lets go to clap. The sun drops, instant night, the music stops. It snatches the yarn back: day again on the downbeat.</td></tr>
+      <tr><td><button data-t="15.66">15.7</button></td><td>Twist</td><td>It ties the yarn round the sleeping sheep in a bow and crows from its back. Title.</td></tr>
+    </tbody>
+  </table>
+  <div class="prompt"><span class="who">Lead, on the story and styleframes</span>
+    <p>Approved. A lovely idea: the handmade world plays into the story itself (the sun on a thread over a spool), and the gag with the sheep holding the day is strong. The mechanics must read in one wide shot (the moon, the thread over the spool, the sun on the other end) before he grabs the thread, or the twist won't land.</p>
+    <p>The frog in the parallel cartoon is also called Pip, so rename the chick.</p></div>
+  <p class="muted small">The chick was renamed Chik.</p>
+</section>
+
+<section class="step" id="targets" data-tone="night" data-label="Targets">
+  <span class="spool" aria-hidden="true">3</span>
+  <h2>Targets, not footage</h2>
+  <p>The heroes, the props and one styleframe per shot were generated with GPT Image 2.5 on Higgsfield. They define what the film should look like. None of these pixels is in the film; everything you see on the right was rendered from code.</p>
+  <figure><img src="media/img/turn-pip.jpg" alt="Generated turnaround of a yellow felt chick in four views" loading="lazy" width="1600" height="905" class="shot"><figcaption><span class="tag target">Target</span>Turnaround of the chick, generated.</figcaption></figure>
+  <div class="grid2">
+    <figure style="margin:0"><img src="media/img/turn-wool.jpg" alt="Generated turnaround of a felt sheep with loopy fleece" loading="lazy" width="1600" height="905"><figcaption><span class="tag target">Target</span>The sheep.</figcaption></figure>
+    <figure style="margin:0"><img src="media/img/props.jpg" alt="Generated prop sheet: paper moon, paper sun, spool, nest, pop-up flowers, felt tree, cardboard hill" loading="lazy" width="1600" height="905"><figcaption><span class="tag target">Target</span>Props.</figcaption></figure>
+  </div>
+  <div class="prompt gen"><span class="who">Image prompt for the chick turnaround</span>
+    <p>Character turnaround sheet of a handmade felt toy: a tiny round yellow felt chick named Pip, about 6 cm tall, shown in four views in a row on a plain warm light-grey studio background — front, three-quarter, side profile, back. Egg-shaped body made of soft wool felt with visible fuzz and fibres, a hand-stitched seam running round the belly in contrasting orange thread, two small flat felt wing flaps sewn at the sides with running stitches, a small tuft of three felt feathers on top of the head, two shiny black sewn-on button eyes with four holes and thread crosses, a little orange felt beak made of two triangles, short orange felt feet with three toes. Soft studio lighting, macro product photography of a real craft toy, shallow depth of field, consistent proportions in all views, clean layout, no text.</p></div>
+  <h3>Eight styleframes, one per shot</h3>
+  <div class="grid4">
+    <img src="media/img/sf-1.jpg" alt="Styleframe 1: the chick springs out of the nest at night" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-2.jpg" alt="Styleframe 2: wide night diorama with the moon on yarn" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-3.jpg" alt="Styleframe 3: the chick crows under the moon" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-4.jpg" alt="Styleframe 4: the chick finds the sleeping paper sun" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-5.jpg" alt="Styleframe 5: the chick hangs on the yarn" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-6.jpg" alt="Styleframe 6: sunrise over the felt hills" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-7.jpg" alt="Styleframe 7: the chick holds the yarn at night" loading="lazy" width="1000" height="747">
+    <img src="media/img/sf-8.jpg" alt="Styleframe 8: the chick on the sheep, yarn tied in a bow" loading="lazy" width="1000" height="747">
+  </div>
+  <p class="muted small" style="margin-top:10px"><span class="tag target">Target</span>Styleframes, generated with the turnarounds as references.</p>
+</section>
+
+<section class="step" id="renderer" data-tone="night" data-label="Our renderer">
+  <span class="spool" aria-hidden="true">4</span>
+  <h2>Teaching our renderer felt and paper</h2>
+  <p>The renderer is our own path tracer: it traces how light bounces through the scene, on the GPU through WebGPU, inside headless Chrome. The integrator, acceleration structure, materials, camera, denoiser and tone mapping are our own code. It ran on rented Runpod GPUs and a remote RTX 5090, never on the Mac.</p>
+  <p>The felt chat copied the engine and taught its copy two new materials:</p>
+  <ul class="list">
+    <li><b>Felt fuzz.</b> A sheen layer, the soft glow that velvet and wool show at grazing angles, so the felt lights up along its contours in backlight.</li>
+    <li><b>Paper that lets light through.</b> Diffuse transmission for thin paper, so the moon, the stars and the sun glow from behind.</li>
+    <li>Plus bump strength on materials, for the fibre surface.</li>
+  </ul>
+  <p>The textures are generated in code as well: felt, paper and corrugated cardboard, written with numpy. Geometry comes from a small kit: felt pillows and paper cut-outs grown from 2-D shapes, tubes for yarn, wire and stitches, and thousands of surface fibres for the fuzz. The chick alone carries about 9,000 fibres and about 300,000 triangles; a full scene is about 2.4 million.</p>
+</section>
+
+<section class="step" id="models" data-tone="night" data-label="Modelling in code">
+  <span class="spool" aria-hidden="true">5</span>
+  <h2>Models in code, checked against the turnarounds</h2>
+  <p>Each hero was built as a program and rendered in the same four views as its target, so the two could be compared side by side.</p>
+  <div class="grid4">
+    <img src="media/img/code-pip-front.jpg" alt="Our rendered chick, front" loading="lazy" width="800" height="600">
+    <img src="media/img/code-pip-threequarter.jpg" alt="Our rendered chick, three-quarter" loading="lazy" width="800" height="600">
+    <img src="media/img/code-pip-side.jpg" alt="Our rendered chick, side" loading="lazy" width="800" height="600">
+    <img src="media/img/code-pip-back.jpg" alt="Our rendered chick, back" loading="lazy" width="800" height="600">
+    <img src="media/img/code-wool-front.jpg" alt="Our rendered sheep, front" loading="lazy" width="800" height="600">
+    <img src="media/img/code-wool-threequarter.jpg" alt="Our rendered sheep, three-quarter" loading="lazy" width="800" height="600">
+    <img src="media/img/code-wool-side.jpg" alt="Our rendered sheep, side" loading="lazy" width="800" height="600">
+    <img src="media/img/code-wool-back.jpg" alt="Our rendered sheep, back" loading="lazy" width="800" height="600">
+  </div>
+  <p class="muted small" style="margin-top:10px"><span class="tag ours">Our code</span>Turnaround renders from our engine.</p>
+  <div class="grid2" style="margin-top:18px">
+    <figure style="margin:0"><img src="media/img/code-set-wide-night.jpg" alt="Our rendered diorama at night" loading="lazy" width="800" height="600"><figcaption><span class="tag ours">Our code</span>Set, night.</figcaption></figure>
+    <figure style="margin:0"><img src="media/img/code-set-wide-day.jpg" alt="Our rendered diorama by day" loading="lazy" width="800" height="600"><figcaption><span class="tag ours">Our code</span>Set, day.</figcaption></figure>
+  </div>
+  <p>The chat kept an honest list of gaps against the targets. The chick: the body drifts toward orange under the warm key light, and the tuft merges into one shape when small. The sheep: the fleece reads as grey noodles in neutral light where the target is fluffier and creamier. The set: the hills are less obviously layered cardboard, and the foreground is emptier than in the styleframes.</p>
+</section>
+
+<section class="step" id="compare" data-tone="dawn" data-label="Target and code">
+  <span class="spool" aria-hidden="true">6</span>
+  <h2>Target and code, shot by shot</h2>
+  <p>On the left of each pair is the generated styleframe; on the right is the same moment from the finished film. The code version is simpler. The staging, the light direction and the story beat carry over. Tap a pair to play that moment.</p>
+  <div id="pairs"></div>
+</section>
+
+<section class="step" id="animatic" data-tone="dawn" data-label="Animatic and notes">
+  <span class="spool" aria-hidden="true">7</span>
+  <h2>Animatic and the lead's notes</h2>
+  <p>The whole film was first rendered small and noisy (640 × 480, 40 samples per pixel) with the music, synthesised sound effects and a title, to check story and timing before the expensive render.</p>
+  <figure><video src="media/animatic-v1.mp4" controls muted playsinline preload="none" poster="" class="shot" style="aspect-ratio:4/3;width:100%" aria-label="Animatic v1"></video><figcaption>Animatic v1, with the licensed track it was cut to at that stage.</figcaption></figure>
+  <p>The felt chat listed its own fixes: the third shot repeated the angle of the first; the sleeping sun had to be pushed to the centre of frame; the chick was too small in the sunrise and the gag; it walked through the sheep in the last shot; the night was murky.</p>
+  <div class="prompt"><span class="who">Lead, on the animatic</span>
+    <p>The story and timing read, and your list of composition fixes is right — do all of it. But the main gap with the styleframes is the look. The felt must be visible: a fuzz halo along the contour glowing in backlight, seams with stitches, hills as stacked felt layers with the corrugated cardboard edge visible in the cut. The night is flat: it needs a deep-blue night with a warm glow from the paper moon and stars. The sun and moon are tiny in the wide shots: bring the mechanics closer so they read.</p></div>
+  <p class="muted small">The composition fixes went into this film. The bigger look notes arrived after the final render had started, so they are being worked into a separate look pass; the film on this page is that first finished cut with the sound and title of v1.1.</p>
+</section>
+
+<section class="step" id="render" data-tone="dawn" data-label="Render on Runpod">
+  <span class="spool" aria-hidden="true">8</span>
+  <h2>The render on rented GPUs</h2>
+  <p>Nothing heavy ran on the Mac. The chat brought up its own Runpod pods with RTX 4090 cards (at $0.89 an hour each), checked that WebGPU saw the NVIDIA card, and split the frames between them.</p>
+  <ul class="list">
+    <li>The animatic: 480 frames across three pods.</li>
+    <li>The final: 1440 × 1080, 192 samples per pixel, on four pods. About 20 seconds of wall time per frame on one 4090, mostly spent packing and uploading the scene's 2.4 million triangles.</li>
+    <li>After review, frames 0–11 and 158–479 were rendered again on three pods.</li>
+    <li>Each pod was deleted as soon as its part was done, and every deletion was checked.</li>
+  </ul>
+</section>
+
+<section class="step" id="review" data-tone="day" data-label="Review">
+  <span class="spool" aria-hidden="true">9</span>
+  <h2>Review, frame by frame</h2>
+  <p>Before anything reaches Nurbek, a machine pass measures every frame and every audio sample, flags jumps, holds and pops, and gives a reviewer one frame per shot to look at. Then a fresh agent with no context watches the film cold.</p>
+  <p class="callout">The fresh eyes gave the first cut 4 out of 10.</p>
+  <p>What it found, and what was fixed:</p>
+  <ul class="list">
+    <li>A cut between two shots from the same angle looked like a mistake. It became one continuous shot with a comic push-in.</li>
+    <li>The gag did not read: the chick was tiny and the release was invisible. Now the release, the clap and the yarn zipping up play in a medium shot, and the chick turns and stares into the lens.</li>
+    <li>The yarn looked glued to the chick's crest. Now it hangs in profile, holding the yarn in its beak.</li>
+    <li>The moon passed through the chick. It now lands in front of the moon, and the moon and sun get motion blur.</li>
+    <li>The yarn crossed the sheep's face. The loop moved round the body.</li>
+    <li>The opening was static. The nest now trembles before the spring pops.</li>
+  </ul>
+  <p>The second machine pass showed only intended or minor flags. Remaining weak spots are written down: the chick is small in the wide shot at 2–4 s, and the sheep's fleece looks greyish.</p>
+</section>
+
+<section class="step" id="ip" data-tone="day" data-label="IP pass, v1.1">
+  <span class="spool" aria-hidden="true">10</span>
+  <h2>Clearing it for the main page</h2>
+  <div class="prompt"><span class="who">Nurbek</span><p>Re-check this felt video for IP, completely. It's going on the main page.</p></div>
+  <p>The check covered frames, story, names, title, font and music. Three items came up: the title was set in Arial Rounded, a commercial font; the music was a track from a licensed library; and the sheep might be compared to a famous animated sheep.</p>
+  <div class="prompt"><span class="who">Nurbek</span>
+    <p>The music has to change. Just generate similar music.</p>
+    <p>That's a different sheep. Ours is just an ordinary sheep.</p>
+    <p>Change the music and the font, and that's it. Quickly.</p></div>
+  <p>The sheep stayed. Version 1.1 kept the picture exactly as it was and changed two things:</p>
+  <ul class="list">
+    <li><b>Music.</b> Four instrumentals generated with Sonilo Music on Higgsfield. The chosen one has its drop landing on the sunrise at 11 seconds by itself; it was fitted to the edit in code, with the stop for the gag kept in place and our own sound effects mixed under it.</li>
+    <li><b>Title.</b> GOOD MORNING! is now set in Fredoka, a free font under the SIL Open Font License.</li>
+  </ul>
+  <div class="prompt gen"><span class="who">Music prompt, the chosen take</span>
+    <p>Cheerful cosy indie-pop instrumental for a children's animated short, 106 BPM, major key, warm acoustic guitar and ukulele strums, glockenspiel melody, light claps and snaps, soft kick and bass, sunny morning feeling, gentle quiet intro that builds, then a bright full chorus drop, playful and heartwarming, no vocals</p></div>
+  <p>The new version passed the machine check and was delivered 52 minutes after v1.</p>
+</section>
+
+<footer>
+  <p>Directed by Nurbek at Higgsfield. Built with Claude Code. The engine, the scene code and the production skill are Higgsfield's internal assets and are not published here.</p>
+  <p>Title font: Fredoka, SIL Open Font License 1.1 (<a href="media/fonts/OFL.txt">license</a>). Music: generated for this film. This page loads nothing from third parties and uses no trackers.</p>
+</footer>
+</main>
+</div>
+
+<script>
+(function(){
+  var film=document.getElementById('film'), now=document.getElementById('now'), snd=document.getElementById('sound');
+  var FPS=24;
+  // target → code pairs: styleframe index, film frame, label
+  var P=[[1,30,'Hook'],[2,80,'Wide'],[3,135,'Crow'],[4,200,'Climb'],[5,245,'Pull'],[6,300,'Drop'],[7,350,'Gag'],[8,470,'Twist']];
+  var box=document.getElementById('pairs');
+  P.forEach(function(p){
+    var d=document.createElement('div'); d.className='pair';
+    d.innerHTML='<div class="pair-head"><b>'+p[2]+'</b><button class="btn" type="button" data-t="'+(p[1]/FPS).toFixed(2)+'">Play at '+(p[1]/FPS).toFixed(1)+' s</button></div>'+
+      '<div class="grid2"><figure style="margin:0"><img src="media/img/sf-'+p[0]+'.jpg" alt="Generated styleframe, '+p[2]+'" loading="lazy" width="1000" height="747"><figcaption><span class="tag target">Target</span></figcaption></figure>'+
+      '<figure style="margin:0"><img src="media/img/film-'+p[0]+'.jpg" alt="Frame '+p[1]+' of the film, '+p[2]+'" loading="lazy" width="1000" height="750"><figcaption><span class="tag ours">Our code</span>frame '+p[1]+'</figcaption></figure></div>';
+    box.appendChild(d);
+  });
+  function seek(t){ try{ film.currentTime=t; var pr=film.play(); if(pr&&pr.catch) pr.catch(function(){});}catch(e){} }
+  document.addEventListener('click',function(e){
+    var b=e.target.closest('[data-t]'); if(!b) return; seek(parseFloat(b.getAttribute('data-t')));
+  });
+  snd.addEventListener('click',function(){
+    film.muted=!film.muted; if(!film.muted){ var pr=film.play(); if(pr&&pr.catch) pr.catch(function(){}); }
+    snd.textContent=film.muted?'Turn sound on':'Mute'; snd.setAttribute('aria-pressed',String(!film.muted));
+  });
+  film.addEventListener('volumechange',function(){ snd.textContent=film.muted?'Turn sound on':'Mute'; snd.setAttribute('aria-pressed',String(!film.muted)); });
+  // the page goes from night to day as you read
+  var secs=[].slice.call(document.querySelectorAll('[data-tone]')).filter(function(n){return n!==document.body;});
+  var io=new IntersectionObserver(function(es){
+    es.forEach(function(en){
+      if(en.isIntersecting){
+        document.body.setAttribute('data-tone',en.target.getAttribute('data-tone'));
+        var n=en.target.querySelector('.spool');
+        now.innerHTML=(n?'<b>Step '+n.textContent+'</b> ':'<b>Good Morning!</b> ')+en.target.getAttribute('data-label');
+      }
+    });
+  },{rootMargin:'-45% 0px -50% 0px'});
+  secs.forEach(function(s){io.observe(s);});
+})();
+</script>
+</body>
+</html>
